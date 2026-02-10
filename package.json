@@ -1,0 +1,36 @@
+{
+  "name": "@openclaw/onebot11",
+  "version": "2026.2.6-3",
+  "description": "OpenClaw OneBot11 channel plugin",
+  "type": "module",
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "openclaw": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "onebot11",
+      "label": "OneBot 11",
+      "selectionLabel": "OneBot 11 (HTTP + SSE)",
+      "docsPath": "/channels/onebot11",
+      "docsLabel": "onebot11",
+      "blurb": "QQ-style messaging bridge via OneBot 11 actions and SSE events.",
+      "aliases": [
+        "ob11",
+        "onebot"
+      ],
+      "order": 80,
+      "quickstartAllowFrom": true
+    },
+    "install": {
+      "npmSpec": "@openclaw/onebot11",
+      "localPath": "extensions/onebot11",
+      "defaultChoice": "npm"
+    }
+  }
+}
