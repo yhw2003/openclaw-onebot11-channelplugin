@@ -1,4 +1,9 @@
-import type { DmPolicy, GroupPolicy } from "openclaw/plugin-sdk";
+import type {
+  BlockStreamingCoalesceConfig,
+  DmPolicy,
+  GroupPolicy,
+} from "openclaw/plugin-sdk";
+
 
 export type OneBotSendMode = "http" | "sse-http";
 
@@ -14,8 +19,13 @@ export type OneBot11AccountConfig = {
   allowFrom?: Array<string | number>;
   groupPolicy?: GroupPolicy;
   groupAllowFrom?: Array<string | number>;
+  mentionAllowFrom?: Array<string | number>;
   requireMention?: boolean;
+  historyLimit?: number;
+  historyStrategy?: "recent" | "ai-related-only";
   textChunkLimit?: number;
+  blockStreaming?: boolean;
+  blockStreamingCoalesce?: BlockStreamingCoalesceConfig;
   responsePrefix?: string;
 };
 

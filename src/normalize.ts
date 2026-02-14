@@ -1,7 +1,157 @@
 import type { OneBot11MessageEvent } from "./types.js";
 
+type OneBot11MessageSegment = {
+  type?: string;
+  data?: Record<string, unknown>;
+};
+
+export type OneBot11InboundImage = {
+  index: number;
+  source: "segment" | "cq";
+  url?: string;
+  path?: string;
+};
+
 function normalizeId(value: string): string {
   return value.trim().replace(/^(onebot11|ob11):/i, "");
+}
+
+function asTrimmedString(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+  if (typeof value === "number") {
+    return String(value);
+  }
+  return undefined;
+}
+
+function resolveImageLocation(data: Record<string, unknown>): { url?: string; path?: string } {
+  const url = asTrimmedString(data.url);
+  if (url) {
+    return { url };
+  }
+
+  const file = asTrimmedString(data.file);
+  if (!file) {
+    return {};
+  }
+  if (/^https?:\/\//i.test(file)) {
+    return { url: file };
+  }
+  return { path: file };
+}
+
+function parseCqParams(raw: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const pair of raw.split(",")) {
+    const index = pair.indexOf("=");
+    if (index <= 0) {
+      continue;
+    }
+    const key = pair.slice(0, index).trim();
+    const value = pair.slice(index + 1).trim();
+    if (!key || !value) {
+      continue;
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
+function dedupeImages(images: OneBot11InboundImage[]): OneBot11InboundImage[] {
+  const seen = new Set<string>();
+  const deduped: OneBot11InboundImage[] = [];
+  for (const image of images) {
+    const key = `${image.url ?? ""}\u0000${image.path ?? ""}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(image);
+  }
+  return deduped;
+}
+
+function extractImagesFromSegments(message: OneBot11MessageEvent): OneBot11InboundImage[] {
+  if (!Array.isArray(message.message)) {
+    return [];
+  }
+
+  const images: OneBot11InboundImage[] = [];
+  for (let index = 0; index < message.message.length; index += 1) {
+    const segment = message.message[index];
+    if (!segment || typeof segment !== "object") {
+      continue;
+    }
+    const record = segment as OneBot11MessageSegment;
+    if (record.type !== "image") {
+      continue;
+    }
+    const location = resolveImageLocation(record.data ?? {});
+    if (!location.url && !location.path) {
+      continue;
+    }
+    images.push({
+      index,
+      source: "segment",
+      ...location,
+    });
+  }
+  return images;
+}
+
+function extractImagesFromRawMessage(message: OneBot11MessageEvent): OneBot11InboundImage[] {
+  const rawMessage = typeof message.raw_message === "string" ? message.raw_message : "";
+  if (!rawMessage) {
+    return [];
+  }
+
+  const images: OneBot11InboundImage[] = [];
+  const matcher = /\[CQ:([^,\]]+)(?:,([^\]]*))?\]/g;
+  let match: RegExpExecArray | null = null;
+  let index = 0;
+  while ((match = matcher.exec(rawMessage)) !== null) {
+    const type = match[1]?.trim().toLowerCase();
+    if (type !== "image") {
+      index += 1;
+      continue;
+    }
+    const params = parseCqParams(match[2] ?? "");
+    const location = resolveImageLocation(params);
+    if (location.url || location.path) {
+      images.push({
+        index,
+        source: "cq",
+        ...location,
+      });
+    }
+    index += 1;
+  }
+
+  return images;
+}
+
+function extractInboundImages(message: OneBot11MessageEvent): OneBot11InboundImage[] {
+  return dedupeImages([...extractImagesFromSegments(message), ...extractImagesFromRawMessage(message)]);
+}
+
+function detectMentionFromSegments(message: OneBot11MessageEvent, selfId: string): boolean {
+  if (!selfId || !Array.isArray(message.message)) {
+    return false;
+  }
+  return message.message.some((segment) => {
+    if (!segment || typeof segment !== "object") {
+      return false;
+    }
+    const record = segment as OneBot11MessageSegment;
+    if (record.type !== "at") {
+      return false;
+    }
+    const qq = asTrimmedString(record.data?.qq);
+    return qq === selfId;
+  });
 }
 
 export function normalizeOneBot11MessagingTarget(raw: string): string | undefined {
@@ -56,7 +206,7 @@ export function renderOneBot11Text(message: OneBot11MessageEvent): string {
         if (!segment || typeof segment !== "object") {
           return "";
         }
-        const record = segment as { type?: string; data?: Record<string, unknown> };
+        const record = segment as OneBot11MessageSegment;
         if (record.type === "text") {
           const text = record.data?.text;
           return typeof text === "string" ? text : "";
@@ -90,6 +240,9 @@ export function parseOneBot11InboundEvent(
       text: string;
       raw: OneBot11MessageEvent;
       wasMentioned: boolean;
+      images: OneBot11InboundImage[];
+      imageUrls: string[];
+      imagePaths: string[];
     }
   | { ok: false; reason: string } {
   if (!payload || typeof payload !== "object") {
@@ -118,7 +271,8 @@ export function parseOneBot11InboundEvent(
   }
 
   const text = renderOneBot11Text(event);
-  if (!text) {
+  const images = extractInboundImages(event);
+  if (!text && images.length === 0) {
     return { ok: false, reason: "empty message" };
   }
 
@@ -129,7 +283,9 @@ export function parseOneBot11InboundEvent(
   const selfId = event.self_id == null ? "" : String(event.self_id);
   const rawMessage = typeof event.raw_message === "string" ? event.raw_message : "";
   const mentionToken = selfId ? `[CQ:at,qq=${selfId}]` : "";
-  const wasMentioned = Boolean(mentionToken && rawMessage.includes(mentionToken));
+  const wasMentioned =
+    Boolean(mentionToken && rawMessage.includes(mentionToken)) ||
+    detectMentionFromSegments(event, selfId);
 
   return {
     ok: true,
@@ -142,5 +298,12 @@ export function parseOneBot11InboundEvent(
     text,
     raw: event,
     wasMentioned,
+    images,
+    imageUrls: images
+      .map((image) => image.url)
+      .filter((value): value is string => typeof value === "string" && value.length > 0),
+    imagePaths: images
+      .map((image) => image.path)
+      .filter((value): value is string => typeof value === "string" && value.length > 0),
   };
 }

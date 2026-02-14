@@ -1,4 +1,5 @@
 import { Readable } from "node:stream";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 
 export type OneBot11SseLogger = {
   log?: (message: string) => void;
@@ -209,7 +210,7 @@ export class OneBot11SSEClient {
     if (!body) {
       return;
     }
-    const stream = body instanceof ReadableStream ? Readable.fromWeb(body) : body;
+    const stream = body instanceof ReadableStream ? Readable.fromWeb(body as NodeReadableStream) : body;
     const decoder = new TextDecoder();
     let buffer = "";
 

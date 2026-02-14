@@ -56,6 +56,9 @@ describe("onebot11 normalize", () => {
     expect(parsed.senderName).toBe("alice");
     expect(parsed.text).toBe("hello");
     expect(parsed.wasMentioned).toBe(false);
+    expect(parsed.images).toEqual([]);
+    expect(parsed.imageUrls).toEqual([]);
+    expect(parsed.imagePaths).toEqual([]);
   });
 
   it("parses inbound group message and detects mention", () => {
@@ -81,6 +84,99 @@ describe("onebot11 normalize", () => {
     expect(parsed.chatId).toBe("777");
     expect(parsed.senderId).toBe("10010");
     expect(parsed.wasMentioned).toBe(true);
+  });
+
+  it("extracts images from message segments", () => {
+    const parsed = parseOneBot11InboundEvent({
+      post_type: "message",
+      message_type: "group",
+      time: 1710001000,
+      self_id: 123456,
+      user_id: 10010,
+      group_id: 777,
+      message_id: 101,
+      message: [
+        { type: "image", data: { url: "https://example.com/a.png" } },
+        { type: "text", data: { text: "hello" } },
+        { type: "image", data: { file: "./files/local.jpg" } },
+      ],
+    });
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) {
+      return;
+    }
+    expect(parsed.imageUrls).toEqual(["https://example.com/a.png"]);
+    expect(parsed.imagePaths).toEqual(["./files/local.jpg"]);
+    expect(parsed.images).toEqual([
+      { index: 0, source: "segment", url: "https://example.com/a.png" },
+      { index: 2, source: "segment", path: "./files/local.jpg" },
+    ]);
+  });
+
+  it("extracts images from CQ raw message", () => {
+    const parsed = parseOneBot11InboundEvent({
+      post_type: "message",
+      message_type: "group",
+      time: 1710001000,
+      self_id: 123456,
+      user_id: 10010,
+      group_id: 777,
+      message_id: 102,
+      raw_message:
+        "[CQ:image,file=https://example.com/a.png] [CQ:image,file=./files/local.jpg] hi",
+    });
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) {
+      return;
+    }
+    expect(parsed.imageUrls).toEqual(["https://example.com/a.png"]);
+    expect(parsed.imagePaths).toEqual(["./files/local.jpg"]);
+  });
+
+  it("accepts image-only payload with empty text", () => {
+    const parsed = parseOneBot11InboundEvent({
+      post_type: "message",
+      message_type: "private",
+      time: 1710000001,
+      self_id: 123456,
+      user_id: 10086,
+      message_id: 43,
+      message: [{ type: "image", data: { url: "https://example.com/only.png" } }],
+      raw_message: "",
+    });
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) {
+      return;
+    }
+    expect(parsed.text).toBe("");
+    expect(parsed.imageUrls).toEqual(["https://example.com/only.png"]);
+  });
+
+  it("detects mention from segments when raw message is absent", () => {
+    const parsed = parseOneBot11InboundEvent({
+      post_type: "message",
+      message_type: "group",
+      time: 1710001000,
+      self_id: 123456,
+      user_id: 10010,
+      group_id: 777,
+      message_id: 103,
+      raw_message: "",
+      message: [
+        { type: "at", data: { qq: "123456" } },
+        { type: "image", data: { url: "https://example.com/a.png" } },
+      ],
+    });
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) {
+      return;
+    }
+    expect(parsed.wasMentioned).toBe(true);
+    expect(parsed.imageUrls).toEqual(["https://example.com/a.png"]);
   });
 
   it("rejects non-message payloads", () => {

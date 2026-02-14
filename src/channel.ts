@@ -62,7 +62,10 @@ function endpointLooksValid(value: string): boolean {
 
 export const onebot11Plugin: ChannelPlugin<ResolvedOneBot11Account> = {
   id: "onebot11",
-  meta,
+  meta: {
+    ...meta,
+    aliases: [...meta.aliases],
+  },
   capabilities: {
     chatTypes: ["direct", "group"],
     threads: false,

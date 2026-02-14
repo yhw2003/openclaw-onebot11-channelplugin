@@ -114,6 +114,9 @@ export async function monitorOneBot11Provider(opts: MonitorOneBot11Options = {})
           timestampMs: parsed.timestampMs,
           text: parsed.text,
           wasMentioned: parsed.wasMentioned,
+          images: parsed.images,
+          imageUrls: parsed.imageUrls,
+          imagePaths: parsed.imagePaths,
         },
         statusSink: opts.statusSink,
       });
