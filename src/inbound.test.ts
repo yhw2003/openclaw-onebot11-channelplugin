@@ -19,6 +19,15 @@ const mockFormatAgentEnvelope = vi.fn((payload: { body: string }) => payload.bod
 const mockFinalizeInboundContext = vi.fn((ctx) => ctx);
 const mockRecordInboundSession = vi.fn(async () => undefined);
 const mockDispatchReplyWithBufferedBlockDispatcher = vi.fn(async () => ({ queuedFinal: true }));
+const mockFetchRemoteMedia = vi.fn(async ({ url }: { url: string }) => ({
+  buffer: Buffer.from(`image:${url}`),
+  contentType: "image/png",
+  fileName: "image.png",
+}));
+const mockSaveMediaBuffer = vi.fn(async (_buffer: Buffer, contentType?: string) => ({
+  path: "/tmp/openclaw/onebot11-inbound/image.png",
+  contentType: contentType ?? "image/png",
+}));
 
 function createMockRuntime(): PluginRuntime {
   return {
@@ -41,6 +50,10 @@ function createMockRuntime(): PluginRuntime {
         resolveStorePath: mockResolveStorePath,
         readSessionUpdatedAt: mockReadSessionUpdatedAt,
         recordInboundSession: mockRecordInboundSession,
+      },
+      media: {
+        fetchRemoteMedia: mockFetchRemoteMedia,
+        saveMediaBuffer: mockSaveMediaBuffer,
       },
       reply: {
         resolveEnvelopeFormatOptions: mockResolveEnvelopeFormatOptions,
@@ -106,6 +119,15 @@ describe("onebot11 inbound behavior", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFetchRemoteMedia.mockResolvedValue({
+      buffer: Buffer.from("image"),
+      contentType: "image/png",
+      fileName: "image.png",
+    });
+    mockSaveMediaBuffer.mockResolvedValue({
+      path: "/tmp/openclaw/onebot11-inbound/image.png",
+      contentType: "image/png",
+    });
     setOneBotRuntime(createMockRuntime());
   });
 
@@ -190,12 +212,135 @@ describe("onebot11 inbound behavior", () => {
     expect(mockRecordInboundSession).not.toHaveBeenCalled();
   });
 
+  it("prefetches remote image and injects local MediaPath while keeping MediaUrl", async () => {
+    mockSaveMediaBuffer.mockResolvedValueOnce({
+      path: "/tmp/openclaw/onebot11-inbound/prefetched.png",
+      contentType: "image/png",
+    });
+
+    await handleOneBot11Inbound({
+      cfg,
+      runtime: createRuntimeEnv(),
+      account: createAccount({ requireMention: true }),
+      event: createEvent({
+        chatId: "group-prefetch-success",
+        senderId: "90001",
+        messageId: "msg-prefetch-success",
+        text: "image message",
+        wasMentioned: true,
+        imageUrls: ["https://example.com/prefetch.png"],
+      }),
+    });
+
+    expect(mockFetchRemoteMedia).toHaveBeenCalledTimes(1);
+    expect(mockSaveMediaBuffer).toHaveBeenCalledTimes(1);
+
+    const dispatchPayload = mockDispatchReplyWithBufferedBlockDispatcher.mock.calls[0]?.[0] as {
+      ctx: Record<string, unknown>;
+    };
+    expect(dispatchPayload.ctx.MediaPath).toBe("/tmp/openclaw/onebot11-inbound/prefetched.png");
+    expect(dispatchPayload.ctx.MediaUrl).toBe("https://example.com/prefetch.png");
+    expect(dispatchPayload.ctx.MediaPaths).toEqual(["/tmp/openclaw/onebot11-inbound/prefetched.png"]);
+    expect(dispatchPayload.ctx.MediaUrls).toEqual(["https://example.com/prefetch.png"]);
+  });
+
+  it("fails open and keeps original media when prefetch fails", async () => {
+    mockFetchRemoteMedia.mockRejectedValueOnce(new Error("download failed"));
+
+    await handleOneBot11Inbound({
+      cfg,
+      runtime: createRuntimeEnv(),
+      account: createAccount({ requireMention: true }),
+      event: createEvent({
+        chatId: "group-prefetch-fallback",
+        senderId: "90002",
+        messageId: "msg-prefetch-fallback",
+        text: "image message",
+        wasMentioned: true,
+        imageUrls: ["https://example.com/fallback.png"],
+      }),
+    });
+
+    expect(mockFetchRemoteMedia).toHaveBeenCalledTimes(1);
+    expect(mockSaveMediaBuffer).not.toHaveBeenCalled();
+    expect(mockDispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(1);
+
+    const dispatchPayload = mockDispatchReplyWithBufferedBlockDispatcher.mock.calls[0]?.[0] as {
+      ctx: Record<string, unknown>;
+    };
+    expect(dispatchPayload.ctx.MediaPath).toBe("https://example.com/fallback.png");
+    expect(dispatchPayload.ctx.MediaUrl).toBe("https://example.com/fallback.png");
+    expect(dispatchPayload.ctx.MediaPaths).toEqual(["https://example.com/fallback.png"]);
+    expect(dispatchPayload.ctx.MediaUrls).toEqual(["https://example.com/fallback.png"]);
+  });
+
+  it("keeps non-http image path without prefetch", async () => {
+    await handleOneBot11Inbound({
+      cfg,
+      runtime: createRuntimeEnv(),
+      account: createAccount({ requireMention: true }),
+      event: createEvent({
+        chatId: "group-local-image-path",
+        senderId: "90003",
+        messageId: "msg-local-image-path",
+        text: "local image",
+        wasMentioned: true,
+        imagePaths: ["./images/local.png"],
+      }),
+    });
+
+    expect(mockFetchRemoteMedia).not.toHaveBeenCalled();
+    expect(mockSaveMediaBuffer).not.toHaveBeenCalled();
+
+    const dispatchPayload = mockDispatchReplyWithBufferedBlockDispatcher.mock.calls[0]?.[0] as {
+      ctx: Record<string, unknown>;
+    };
+    expect(dispatchPayload.ctx.MediaPath).toBe("./images/local.png");
+    expect(dispatchPayload.ctx.MediaUrl).toBe("./images/local.png");
+  });
+
+  it("keeps behavior unchanged when message has no image", async () => {
+    await handleOneBot11Inbound({
+      cfg,
+      runtime: createRuntimeEnv(),
+      account: createAccount({ requireMention: true }),
+      event: createEvent({
+        chatId: "group-no-image",
+        senderId: "90004",
+        messageId: "msg-no-image",
+        text: "text only",
+        wasMentioned: true,
+      }),
+    });
+
+    expect(mockFetchRemoteMedia).not.toHaveBeenCalled();
+    expect(mockSaveMediaBuffer).not.toHaveBeenCalled();
+    expect(mockDispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(1);
+
+    const dispatchPayload = mockDispatchReplyWithBufferedBlockDispatcher.mock.calls[0]?.[0] as {
+      ctx: Record<string, unknown>;
+    };
+    expect(dispatchPayload.ctx.MediaPath).toBeUndefined();
+    expect(dispatchPayload.ctx.MediaUrl).toBeUndefined();
+    expect(dispatchPayload.ctx.Body).toBe("text only");
+  });
+
   it("includes recent history and merges current+history media for allowed mention", async () => {
     const account = createAccount({
       mentionAllowFrom: ["30001"],
       historyStrategy: "recent",
       historyLimit: 5,
     });
+
+    mockSaveMediaBuffer
+      .mockResolvedValueOnce({
+        path: "/tmp/openclaw/onebot11-inbound/history-old.png",
+        contentType: "image/png",
+      })
+      .mockResolvedValueOnce({
+        path: "/tmp/openclaw/onebot11-inbound/current-new.jpg",
+        contentType: "image/jpeg",
+      });
 
     await handleOneBot11Inbound({
       cfg,
@@ -226,8 +371,8 @@ describe("onebot11 inbound behavior", () => {
         timestampMs: 1_710_000_002_000,
         text: "current message",
         wasMentioned: true,
-        imageUrls: [],
-        imagePaths: ["./images/new.jpg"],
+        imageUrls: ["https://example.com/new.jpg"],
+        imagePaths: [],
       }),
     });
 
@@ -243,9 +388,15 @@ describe("onebot11 inbound behavior", () => {
         timestamp: 1_710_000_001_000,
       },
     ]);
-    expect(dispatchPayload.ctx.MediaUrls).toEqual(
-      expect.arrayContaining(["https://example.com/old.png", "./images/new.jpg"]),
-    );
+    expect(mockFetchRemoteMedia).toHaveBeenCalledTimes(2);
+    expect(dispatchPayload.ctx.MediaPaths).toEqual([
+      "/tmp/openclaw/onebot11-inbound/history-old.png",
+      "/tmp/openclaw/onebot11-inbound/current-new.jpg",
+    ]);
+    expect(dispatchPayload.ctx.MediaUrls).toEqual([
+      "https://example.com/old.png",
+      "https://example.com/new.jpg",
+    ]);
   });
 
   it("filters non-ai history entries when historyStrategy is ai-related-only", async () => {

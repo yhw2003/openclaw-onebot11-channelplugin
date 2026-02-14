@@ -5,6 +5,7 @@ import {
   DEFAULT_GROUP_HISTORY_LIMIT,
   logInboundDrop,
   recordPendingHistoryEntryIfEnabled,
+  resolveChannelMediaMaxBytes,
   resolveControlCommandGate,
   resolveMentionGatingWithBypass,
   type HistoryEntry,
@@ -124,6 +125,144 @@ function collectHistoryMediaEntries(entries: OneBot11PendingHistoryEntry[]): One
     }
   }
   return media;
+}
+
+function isHttpUrl(value: string | undefined): value is string {
+  if (!value) {
+    return false;
+  }
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function resolveOneBotEndpointOrigin(endpoint: string | undefined): string | undefined {
+  if (!endpoint) {
+    return undefined;
+  }
+  try {
+    return new URL(endpoint).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveFetchUrl(input: URL | RequestInfo): string | undefined {
+  if (typeof input === "string") {
+    return input;
+  }
+  if (input instanceof URL) {
+    return input.toString();
+  }
+  if (input instanceof Request) {
+    return input.url;
+  }
+  return undefined;
+}
+
+function createOneBotAuthFetch(params: {
+  endpoint?: string;
+  accessToken?: string;
+}): ((input: URL | RequestInfo, init?: RequestInit) => Promise<Response>) | undefined {
+  const endpointOrigin = resolveOneBotEndpointOrigin(params.endpoint);
+  const token = params.accessToken?.trim();
+  if (!endpointOrigin || !token) {
+    return undefined;
+  }
+
+  return (input, init) => {
+    const target = resolveFetchUrl(input);
+    if (!isHttpUrl(target) || new URL(target).origin !== endpointOrigin) {
+      return fetch(input, init);
+    }
+
+    const headers = new Headers(input instanceof Request ? input.headers : undefined);
+    if (init?.headers) {
+      for (const [key, value] of new Headers(init.headers).entries()) {
+        headers.set(key, value);
+      }
+    }
+    headers.set("Authorization", `Bearer ${token}`);
+    return fetch(input, { ...init, headers });
+  };
+}
+
+function resolveMediaFilePathHint(url: string): string | undefined {
+  try {
+    const pathname = new URL(url).pathname;
+    const file = pathname.split("/").filter(Boolean).at(-1)?.trim();
+    return file || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function shouldPrefetchImageMediaEntry(entry: OneBot11MediaEntry): entry is OneBot11MediaEntry & { url: string } {
+  if (!entry.type?.startsWith("image/")) {
+    return false;
+  }
+  return isHttpUrl(entry.url);
+}
+
+async function resolvePrefetchedMediaEntries(params: {
+  core: ReturnType<typeof getOneBotRuntime>;
+  cfg: OpenClawConfig;
+  account: ResolvedOneBot11Account;
+  runtime: RuntimeEnv;
+  entries: OneBot11MediaEntry[];
+}): Promise<OneBot11MediaEntry[]> {
+  if (params.entries.length === 0) {
+    return [];
+  }
+
+  const maxBytes =
+    resolveChannelMediaMaxBytes({
+      cfg: params.cfg,
+      resolveChannelLimitMb: () => undefined,
+      accountId: params.account.accountId,
+    }) ??
+    8 * 1024 * 1024;
+  const fetchImpl = createOneBotAuthFetch({
+    endpoint: params.account.endpoint,
+    accessToken: params.account.accessToken,
+  });
+
+  const out: OneBot11MediaEntry[] = [];
+  for (const entry of params.entries) {
+    if (!shouldPrefetchImageMediaEntry(entry)) {
+      out.push(entry);
+      continue;
+    }
+
+    try {
+      const fetched = await params.core.channel.media.fetchRemoteMedia({
+        url: entry.url,
+        ...(fetchImpl ? { fetchImpl } : {}),
+        filePathHint: resolveMediaFilePathHint(entry.url),
+        maxBytes,
+      });
+      const saved = await params.core.channel.media.saveMediaBuffer(
+        fetched.buffer,
+        fetched.contentType ?? entry.type,
+        "inbound",
+        maxBytes,
+        fetched.fileName ?? resolveMediaFilePathHint(entry.url),
+      );
+      out.push({
+        ...entry,
+        path: saved.path,
+        type: saved.contentType ?? fetched.contentType ?? entry.type,
+      });
+    } catch (error) {
+      params.runtime.error?.(`onebot11: failed to prefetch media ${entry.url}: ${String(error)}`);
+      out.push(entry);
+    }
+  }
+
+  return out;
 }
 
 function buildMediaPayload(mediaEntries: OneBot11MediaEntry[]): {
@@ -478,10 +617,18 @@ export async function handleOneBot11Inbound(params: {
         }))
       : undefined;
 
-  const mediaPayload = buildMediaPayload([
+  const mediaEntries = [
     ...collectHistoryMediaEntries(selectedHistoryEntries),
     ...eventMediaEntries,
-  ]);
+  ];
+  const resolvedMediaEntries = await resolvePrefetchedMediaEntries({
+    core,
+    cfg,
+    account,
+    runtime,
+    entries: mediaEntries,
+  });
+  const mediaPayload = buildMediaPayload(resolvedMediaEntries);
 
   const ctxPayload = core.channel.reply.finalizeInboundContext({
     Body: body,
