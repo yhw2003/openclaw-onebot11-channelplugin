@@ -264,7 +264,10 @@ export async function handleOneBot11Inbound(params: {
   const configMentionAllowFrom = normalizeAllowlist(account.config.mentionAllowFrom ?? []);
   const storeAllowFrom = await core.channel.pairing.readAllowFromStore(CHANNEL_ID).catch(() => []);
   const storeAllow = normalizeAllowlist(storeAllowFrom.map((entry) => String(entry)));
-  const effectiveAllowFrom = dedupeAllowlist([...configAllowFrom, ...storeAllow]);
+  const effectiveAllowFrom = dedupeAllowlist([
+    ...configAllowFrom,
+    ...(dmPolicy === "pairing" ? storeAllow : []),
+  ]);
   const effectiveGroupAllow = dedupeAllowlist(configGroupAllowFrom);
   const effectiveMentionAllow = dedupeAllowlist(configMentionAllowFrom);
 

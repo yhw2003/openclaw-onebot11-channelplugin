@@ -109,6 +109,52 @@ describe("onebot11 inbound behavior", () => {
     setOneBotRuntime(createMockRuntime());
   });
 
+  it("drops DM when dmPolicy=allowlist and sender is not in allowFrom", async () => {
+    mockReadAllowFromStore.mockResolvedValueOnce(["50002"]);
+
+    await handleOneBot11Inbound({
+      cfg,
+      runtime: createRuntimeEnv(),
+      account: createAccount({
+        dmPolicy: "allowlist",
+        allowFrom: ["50001"],
+      }),
+      event: createEvent({
+        chatType: "private",
+        chatId: "50002",
+        senderId: "50002",
+        messageId: "msg-dm-allowlist-denied",
+        text: "hi from not-allowlisted sender",
+      }),
+    });
+
+    expect(mockDispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
+    expect(mockRecordInboundSession).not.toHaveBeenCalled();
+  });
+
+  it("allows DM when dmPolicy=pairing and sender is approved in pairing store", async () => {
+    mockReadAllowFromStore.mockResolvedValueOnce(["60002"]);
+
+    await handleOneBot11Inbound({
+      cfg,
+      runtime: createRuntimeEnv(),
+      account: createAccount({
+        dmPolicy: "pairing",
+        allowFrom: [],
+      }),
+      event: createEvent({
+        chatType: "private",
+        chatId: "60002",
+        senderId: "60002",
+        messageId: "msg-dm-pairing-approved",
+        text: "hi from approved sender",
+      }),
+    });
+
+    expect(mockDispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(1);
+    expect(mockRecordInboundSession).toHaveBeenCalledTimes(1);
+  });
+
   it("drops group message when mention is required but absent", async () => {
     await handleOneBot11Inbound({
       cfg,
