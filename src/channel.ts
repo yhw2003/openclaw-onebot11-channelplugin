@@ -18,7 +18,7 @@ import {
 } from "./accounts.js";
 import { looksLikeOneBot11TargetId, normalizeOneBot11MessagingTarget } from "./normalize.js";
 import { monitorOneBot11Provider } from "./monitor.js";
-import { sendMessageOneBot11 } from "./send.js";
+import { onebot11Outbound } from "./outbound/adapter.js";
 import type { ResolvedOneBot11Account } from "./types.js";
 
 const meta = {
@@ -152,38 +152,7 @@ export const onebot11Plugin: ChannelPlugin<ResolvedOneBot11Account> = {
       hint: "<id|private:id|group:id>",
     },
   },
-  outbound: {
-    deliveryMode: "direct",
-    chunkerMode: "markdown",
-    textChunkLimit: 2000,
-    resolveTarget: ({ to }) => {
-      const normalized = normalizeOneBot11MessagingTarget(to ?? "");
-      if (!normalized) {
-        return {
-          ok: false,
-          error: new Error("Delivering to OneBot11 requires --to <id|private:id|group:id>"),
-        };
-      }
-      return { ok: true, to: normalized };
-    },
-    sendText: async ({ to, text, accountId, replyToId, cfg }) => {
-      const result = await sendMessageOneBot11(to, text, {
-        accountId: accountId ?? undefined,
-        cfg,
-        replyToId: replyToId ?? undefined,
-      });
-      return { channel: "onebot11", ...result };
-    },
-    sendMedia: async ({ to, text, mediaUrl, accountId, replyToId, cfg }) => {
-      const message = mediaUrl ? `${text}\n\nAttachment: ${mediaUrl}` : text;
-      const result = await sendMessageOneBot11(to, message, {
-        accountId: accountId ?? undefined,
-        cfg,
-        replyToId: replyToId ?? undefined,
-      });
-      return { channel: "onebot11", ...result };
-    },
-  },
+  outbound: onebot11Outbound,
   status: {
     defaultRuntime: {
       accountId: DEFAULT_ACCOUNT_ID,
