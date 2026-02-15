@@ -16,10 +16,21 @@ const cfg = {
   },
 } as unknown as OpenClawConfig;
 
-function createMockRuntime(): PluginRuntime {
+type MockLogger = {
+  debug: ReturnType<typeof vi.fn>;
+  info: ReturnType<typeof vi.fn>;
+  warn: ReturnType<typeof vi.fn>;
+  error: ReturnType<typeof vi.fn>;
+};
+
+function createMockRuntime(logger: MockLogger): PluginRuntime {
   return {
     config: {
       loadConfig: () => cfg,
+    },
+    logging: {
+      shouldLogVerbose: vi.fn(() => false),
+      getChildLogger: vi.fn(() => logger),
     },
     channel: {
       activity: {
@@ -38,10 +49,17 @@ describe("onebot11 outbound adapter", () => {
   const originalFetch = globalThis.fetch;
   const cleanupDirs: string[] = [];
   let fileUrl = "";
+  let logger: MockLogger;
 
   beforeEach(async () => {
     vi.restoreAllMocks();
-    setOneBotRuntime(createMockRuntime());
+    logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    setOneBotRuntime(createMockRuntime(logger));
 
     // Ensure loadWebMedia() local-root guard passes for our temp file fixture.
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-onebot11-outbound-test-"));
@@ -101,6 +119,12 @@ describe("onebot11 outbound adapter", () => {
         expect.stringContaining("/send_group_msg"),
       ]),
     );
+    const debugLog = logger.debug.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(debugLog).toContain("event=adapter.sendMedia.start");
+    expect(debugLog).toContain("event=actions.request.start");
+    expect(debugLog).toContain("upload_group_file");
+    expect(debugLog).toContain("event=adapter.sendMediaWithFallback.caption_sent");
+    expect(debugLog).not.toContain("test-token");
   });
 
   it("falls back to Attachment text when upload fails", async () => {
@@ -135,6 +159,11 @@ describe("onebot11 outbound adapter", () => {
     expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual(
       expect.arrayContaining([expect.stringContaining("/send_group_msg")]),
     );
+    const debugLog = logger.debug.mock.calls.map((call) => String(call[0])).join("\n");
+    const errorLog = logger.error.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(debugLog).toContain("event=adapter.sendMediaWithFallback.fallback_sent");
+    expect(errorLog).toContain("event=adapter.sendMediaWithFallback.upload_failed");
+    expect(errorLog).not.toContain("test-token");
   });
 
   it("uses --target wording for invalid target errors", () => {
