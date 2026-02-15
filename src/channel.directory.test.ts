@@ -27,4 +27,16 @@ describe("onebot11 config adapter", () => {
     });
     expect(allowFrom).toEqual(["1001", "1002"]);
   });
+
+  it("provides target-first message tool hints", () => {
+    const hints =
+      onebot11Plugin.agentPrompt?.messageToolHints?.({
+        cfg: {} as OpenClawConfig,
+        accountId: undefined,
+      }) ?? [];
+    const combined = hints.join(" ");
+    expect(combined).toContain("`target`");
+    expect(combined).toContain("`to`");
+    expect(combined).toContain("`channelId`");
+  });
 });

@@ -30,7 +30,7 @@ function resolveChunkLimit(account: ReturnType<typeof resolveOneBot11Account>) {
 }
 
 export async function sendMessageOneBot11(
-  to: string,
+  target: string,
   text: string,
   opts: SendOneBot11Opts = {},
 ): Promise<OneBot11SendResult> {
@@ -38,7 +38,7 @@ export async function sendMessageOneBot11(
   const cfg = opts.cfg ?? (core.config.loadConfig() as OpenClawConfig);
   const account = resolveOneBot11Account({ cfg, accountId: opts.accountId });
   const endpoint = resolveEndpoint(account);
-  const target = parseOneBot11Target(to);
+  const parsedTarget = parseOneBot11Target(target);
 
   if (!text?.trim()) {
     throw new Error("Message must be non-empty for OneBot11 sends");
@@ -59,16 +59,16 @@ export async function sendMessageOneBot11(
       message: chunk,
       auto_escape: false,
     };
-    if (target.chatType === "group") {
-      payload.group_id = Number.parseInt(target.id, 10);
+    if (parsedTarget.chatType === "group") {
+      payload.group_id = Number.parseInt(parsedTarget.id, 10);
     } else {
-      payload.user_id = Number.parseInt(target.id, 10);
+      payload.user_id = Number.parseInt(parsedTarget.id, 10);
     }
     if (opts.replyToId?.trim()) {
       payload.message = `[CQ:reply,id=${opts.replyToId.trim()}]${chunk}`;
     }
 
-    const action = target.chatType === "group" ? "send_group_msg" : "send_private_msg";
+    const action = parsedTarget.chatType === "group" ? "send_group_msg" : "send_private_msg";
     const result = await sendOneBot11Action<{ message_id?: number | string }>({
       endpoint,
       action,
@@ -80,7 +80,7 @@ export async function sendMessageOneBot11(
   }
 
   if (!lastMessageId) {
-    lastMessageId = `${target.chatType}:${target.id}:${Date.now()}`;
+    lastMessageId = `${parsedTarget.chatType}:${parsedTarget.id}:${Date.now()}`;
   }
 
   core.channel.activity.record({
@@ -91,6 +91,6 @@ export async function sendMessageOneBot11(
 
   return {
     messageId: lastMessageId,
-    chatId: `${target.chatType}:${target.id}`,
+    chatId: `${parsedTarget.chatType}:${parsedTarget.id}`,
   };
 }

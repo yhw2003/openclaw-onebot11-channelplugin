@@ -129,7 +129,7 @@ async function uploadPrivateFile(params: {
 }
 
 export async function sendFileOneBot11(
-  to: string,
+  target: string,
   mediaUrl: string,
   options: SendFileOneBot11Options = {},
 ): Promise<OneBot11SendResult> {
@@ -137,7 +137,7 @@ export async function sendFileOneBot11(
   const cfg = options.cfg ?? (core.config.loadConfig() as OpenClawConfig);
   const account = resolveOneBot11Account({ cfg, accountId: options.accountId });
   const endpoint = resolveEndpoint(account);
-  const target = parseOneBot11Target(to);
+  const parsedTarget = parseOneBot11Target(target);
 
   const maxBytes = resolveMaxBytes(cfg, account.accountId);
   const media = await loadWebMedia(mediaUrl, { maxBytes, optimizeImages: false });
@@ -148,11 +148,11 @@ export async function sendFileOneBot11(
     const temp = await writeTempMediaFile({ buffer: media.buffer, fileName });
     tempDir = temp.dir;
 
-    if (target.chatType === "group") {
+    if (parsedTarget.chatType === "group") {
       await uploadGroupFile({
         endpoint,
         accessToken: account.accessToken,
-        groupId: target.id,
+        groupId: parsedTarget.id,
         filePath: temp.filePath,
         fileName,
       });
@@ -160,7 +160,7 @@ export async function sendFileOneBot11(
       await uploadPrivateFile({
         endpoint,
         accessToken: account.accessToken,
-        userId: target.id,
+        userId: parsedTarget.id,
         filePath: temp.filePath,
         fileName,
       });
@@ -176,7 +176,7 @@ export async function sendFileOneBot11(
   });
 
   return {
-    messageId: `file:${target.chatType}:${target.id}:${Date.now()}`,
-    chatId: `${target.chatType}:${target.id}`,
+    messageId: `file:${parsedTarget.chatType}:${parsedTarget.id}:${Date.now()}`,
+    chatId: `${parsedTarget.chatType}:${parsedTarget.id}`,
   };
 }

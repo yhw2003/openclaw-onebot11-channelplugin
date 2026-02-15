@@ -73,6 +73,12 @@ export const onebot11Plugin: ChannelPlugin<ResolvedOneBot11Account> = {
     nativeCommands: false,
     blockStreaming: true,
   },
+  agentPrompt: {
+    messageToolHints: () => [
+      "- OneBot11 targeting: use `target` for message tool sends. Do not pass `to` or `channelId`.",
+      "- OneBot11 target formats: `<id>`, `private:<id>`, `group:<id>`.",
+    ],
+  },
   reload: { configPrefixes: ["channels.onebot11"] },
   configSchema: buildChannelConfigSchema(OneBot11ConfigSchema),
   config: {

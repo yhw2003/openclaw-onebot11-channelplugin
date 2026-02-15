@@ -352,10 +352,10 @@ async function deliverOneBot11Reply(params: {
 
   const mediaBlock = mediaList.filter(Boolean).map((url) => `Attachment: ${url}`).join("\n");
   const merged = text ? (mediaBlock ? `${text}\n\n${mediaBlock}` : text) : mediaBlock;
-  const to = `${chatType}:${chatId}`;
+  const target = `${chatType}:${chatId}`;
 
   const { sendMessageOneBot11 } = await import("./send.js");
-  await sendMessageOneBot11(to, merged, {
+  await sendMessageOneBot11(target, merged, {
     accountId,
     cfg,
     replyToId: payload.replyToId,

@@ -136,4 +136,14 @@ describe("onebot11 outbound adapter", () => {
       expect.arrayContaining([expect.stringContaining("/send_group_msg")]),
     );
   });
+
+  it("uses --target wording for invalid target errors", () => {
+    const resolved = onebot11Outbound.resolveTarget?.({ to: "   " });
+    expect(resolved).toBeDefined();
+    expect(resolved?.ok).toBe(false);
+    if (!resolved || resolved.ok) {
+      return;
+    }
+    expect(resolved.error.message).toContain("--target");
+  });
 });

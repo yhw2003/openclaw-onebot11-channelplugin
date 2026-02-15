@@ -13,21 +13,21 @@ function attachmentFallbackText(text: string, mediaUrl: string): string {
 
 async function sendMediaWithFallback(params: {
   cfg: SendMediaCtx["cfg"];
-  to: string;
+  target: string;
   text: string;
   mediaUrl: string;
   accountId?: string | null;
   replyToId?: string | null;
 }): Promise<OutboundResult> {
   try {
-    await sendFileOneBot11(params.to, params.mediaUrl, {
+    await sendFileOneBot11(params.target, params.mediaUrl, {
       cfg: params.cfg,
       accountId: params.accountId ?? undefined,
     });
 
     // For onebot11, file upload is a separate action; send caption separately to preserve message body.
     if (params.text?.trim()) {
-      const captionResult = await sendMessageOneBot11(params.to, params.text, {
+      const captionResult = await sendMessageOneBot11(params.target, params.text, {
         cfg: params.cfg,
         accountId: params.accountId ?? undefined,
         replyToId: params.replyToId ?? undefined,
@@ -38,11 +38,11 @@ async function sendMediaWithFallback(params: {
     return {
       channel: "onebot11",
       messageId: `file:${Date.now()}`,
-      chatId: params.to,
+      chatId: params.target,
     };
   } catch {
     const fallback = attachmentFallbackText(params.text ?? "", params.mediaUrl);
-    const result = await sendMessageOneBot11(params.to, fallback, {
+    const result = await sendMessageOneBot11(params.target, fallback, {
       cfg: params.cfg,
       accountId: params.accountId ?? undefined,
       replyToId: params.replyToId ?? undefined,
@@ -53,7 +53,7 @@ async function sendMediaWithFallback(params: {
 
 async function sendPayloadOneBot11(params: {
   cfg: SendPayloadCtx["cfg"];
-  to: string;
+  target: string;
   payload: ReplyPayload;
   accountId?: string | null;
   replyToId?: string | null;
@@ -66,7 +66,7 @@ async function sendPayloadOneBot11(params: {
       : [];
 
   if (mediaUrls.length === 0) {
-    const result = await sendMessageOneBot11(params.to, text, {
+    const result = await sendMessageOneBot11(params.target, text, {
       cfg: params.cfg,
       accountId: params.accountId ?? undefined,
       replyToId: params.replyToId ?? undefined,
@@ -83,7 +83,7 @@ async function sendPayloadOneBot11(params: {
     const caption = index === 0 ? text : "";
     last = await sendMediaWithFallback({
       cfg: params.cfg,
-      to: params.to,
+      target: params.target,
       text: caption,
       mediaUrl: url,
       accountId: params.accountId,
@@ -95,7 +95,7 @@ async function sendPayloadOneBot11(params: {
     return last;
   }
 
-  const result = await sendMessageOneBot11(params.to, text, {
+  const result = await sendMessageOneBot11(params.target, text, {
     cfg: params.cfg,
     accountId: params.accountId ?? undefined,
     replyToId: params.replyToId ?? undefined,
@@ -108,17 +108,18 @@ export const onebot11Outbound: ChannelOutboundAdapter = {
   chunkerMode: "markdown",
   textChunkLimit: 2000,
   resolveTarget: ({ to }) => {
-    const normalized = normalizeOneBot11MessagingTarget(to ?? "");
-    if (!normalized) {
+    const target = normalizeOneBot11MessagingTarget(to ?? "");
+    if (!target) {
       return {
         ok: false,
-        error: new Error("Delivering to OneBot11 requires --to <id|private:id|group:id>"),
+        error: new Error("Delivering to OneBot11 requires --target <id|private:id|group:id>"),
       };
     }
-    return { ok: true, to: normalized };
+    return { ok: true, to: target };
   },
   sendText: async ({ to, text, accountId, replyToId, cfg }) => {
-    const result = await sendMessageOneBot11(to, text, {
+    const target = to;
+    const result = await sendMessageOneBot11(target, text, {
       accountId: accountId ?? undefined,
       cfg,
       replyToId: replyToId ?? undefined,
@@ -126,8 +127,9 @@ export const onebot11Outbound: ChannelOutboundAdapter = {
     return { channel: "onebot11", ...result };
   },
   sendMedia: async ({ to, text, mediaUrl, accountId, replyToId, cfg }) => {
+    const target = to;
     if (!mediaUrl) {
-      const result = await sendMessageOneBot11(to, text, {
+      const result = await sendMessageOneBot11(target, text, {
         accountId: accountId ?? undefined,
         cfg,
         replyToId: replyToId ?? undefined,
@@ -137,7 +139,7 @@ export const onebot11Outbound: ChannelOutboundAdapter = {
 
     return await sendMediaWithFallback({
       cfg,
-      to,
+      target,
       text,
       mediaUrl,
       accountId,
@@ -145,9 +147,10 @@ export const onebot11Outbound: ChannelOutboundAdapter = {
     });
   },
   sendPayload: async ({ cfg, to, payload, accountId, replyToId }) => {
+    const target = to;
     return await sendPayloadOneBot11({
       cfg,
-      to,
+      target,
       payload,
       accountId,
       replyToId,
