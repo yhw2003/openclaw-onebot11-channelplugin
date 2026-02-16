@@ -1,9 +1,4 @@
-import type {
-  BlockStreamingCoalesceConfig,
-  DmPolicy,
-  GroupPolicy,
-} from "openclaw/plugin-sdk";
-
+import type { BlockStreamingCoalesceConfig, DmPolicy, GroupPolicy } from "openclaw/plugin-sdk";
 
 export type OneBotSendMode = "http" | "sse-http";
 
@@ -13,6 +8,8 @@ export type OneBot11AccountConfig = {
   endpoint?: string;
   accessToken?: string;
   accessTokenFile?: string;
+  sharedMediaHostDir?: string;
+  sharedMediaContainerDir?: string;
   sendMode?: OneBotSendMode;
   sseUrl?: string;
   dmPolicy?: DmPolicy;

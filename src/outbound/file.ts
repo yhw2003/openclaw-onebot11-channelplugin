@@ -1,11 +1,14 @@
-import { loadWebMedia, resolveChannelMediaMaxBytes, type OpenClawConfig } from "openclaw/plugin-sdk";
-import os from "node:os";
-import path from "node:path";
 import fs from "node:fs/promises";
+import path from "node:path";
+import {
+  loadWebMedia,
+  resolveChannelMediaMaxBytes,
+  type OpenClawConfig,
+} from "openclaw/plugin-sdk";
+import type { OneBot11SendResult } from "../types.js";
 import { resolveOneBot11Account } from "../accounts.js";
 import { parseOneBot11Target } from "../normalize.js";
 import { getOneBotRuntime } from "../runtime.js";
-import type { OneBot11SendResult } from "../types.js";
 import { ensureOneBot11ActionOk, sendOneBot11Action } from "./actions.js";
 import {
   logOutboundDebug,
@@ -18,6 +21,23 @@ type SendFileOneBot11Options = {
   cfg?: OpenClawConfig;
   accountId?: string;
 };
+
+type SharedMediaDirectories = {
+  hostDir: string;
+  containerDir: string;
+};
+
+export class OneBot11FileSyncConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OneBot11FileSyncConfigError";
+  }
+}
+
+function asTrimmedString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
 
 function resolveEndpoint(account: ReturnType<typeof resolveOneBot11Account>): string {
   const endpoint = account.endpoint?.trim();
@@ -70,26 +90,50 @@ function resolveMaxBytes(cfg: OpenClawConfig, accountId: string): number {
       cfg,
       resolveChannelLimitMb: () => undefined,
       accountId,
-    }) ??
-    8 * 1024 * 1024
+    }) ?? 8 * 1024 * 1024
   );
 }
 
-async function writeTempMediaFile(params: { buffer: Buffer; fileName: string }): Promise<{
-  dir: string;
-  filePath: string;
-}> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-onebot11-upload-"));
-  const filePath = path.join(dir, params.fileName);
-  await fs.writeFile(filePath, params.buffer, { mode: 0o600 });
-  return { dir, filePath };
+function resolveSharedMediaDirectories(
+  account: ReturnType<typeof resolveOneBot11Account>,
+): SharedMediaDirectories {
+  const hostDir = asTrimmedString(account.config.sharedMediaHostDir);
+  const rawContainerDir = asTrimmedString(account.config.sharedMediaContainerDir);
+  const containerDir = rawContainerDir?.replace(/\\/g, "/");
+  if (!hostDir || !containerDir) {
+    throw new OneBot11FileSyncConfigError(
+      `OneBot11 file sending requires both channels.onebot11.sharedMediaHostDir and channels.onebot11.sharedMediaContainerDir (account "${account.accountId}").`,
+    );
+  }
+  return {
+    hostDir,
+    containerDir,
+  };
 }
 
-async function cleanupTempDir(dir: string | undefined): Promise<void> {
-  if (!dir) {
-    return;
-  }
-  await fs.rm(dir, { recursive: true, force: true });
+function buildStagedFileName(fileName: string): string {
+  const ext = path.extname(fileName);
+  return `${Date.now()}_${Math.random().toString(36).slice(2, 10)}${ext}`;
+}
+
+async function stageMediaFile(params: {
+  buffer: Buffer;
+  fileName: string;
+  hostDir: string;
+  containerDir: string;
+}): Promise<{
+  hostPath: string;
+  containerPath: string;
+}> {
+  await fs.mkdir(params.hostDir, { recursive: true });
+  const stagedFileName = buildStagedFileName(params.fileName);
+  const hostPath = path.join(params.hostDir, stagedFileName);
+  const containerPath = path.posix.join(params.containerDir, stagedFileName);
+  await fs.writeFile(hostPath, params.buffer, { mode: 0o600 });
+  return {
+    hostPath,
+    containerPath,
+  };
 }
 
 async function uploadGroupFile(params: {
@@ -171,6 +215,7 @@ export async function sendFileOneBot11(
   try {
     const parsedTarget = parseOneBot11Target(target);
     const maxBytes = resolveMaxBytes(cfg, account.accountId);
+    const sharedDirs = resolveSharedMediaDirectories(account);
     const media = await loadWebMedia(mediaUrl, { maxBytes, optimizeImages: false });
     const fileName = resolveFileName({ fileName: media.fileName, contentType: media.contentType });
     logOutboundDebug("file.send.media_loaded", {
@@ -181,35 +226,35 @@ export async function sendFileOneBot11(
       fileName,
     });
 
-    let tempDir: string | undefined;
-    try {
-      const temp = await writeTempMediaFile({ buffer: media.buffer, fileName });
-      tempDir = temp.dir;
-      logOutboundDebug("file.send.temp_written", {
-        target: summarizeTarget(target),
-        fileName,
-        tempPath: path.basename(temp.filePath),
-      });
+    const staged = await stageMediaFile({
+      buffer: media.buffer,
+      fileName,
+      hostDir: sharedDirs.hostDir,
+      containerDir: sharedDirs.containerDir,
+    });
+    logOutboundDebug("file.send.staged", {
+      target: summarizeTarget(target),
+      fileName,
+      stagedHostFile: path.basename(staged.hostPath),
+      stagedContainerPath: staged.containerPath,
+    });
 
-      if (parsedTarget.chatType === "group") {
-        await uploadGroupFile({
-          endpoint,
-          accessToken: account.accessToken,
-          groupId: parsedTarget.id,
-          filePath: temp.filePath,
-          fileName,
-        });
-      } else {
-        await uploadPrivateFile({
-          endpoint,
-          accessToken: account.accessToken,
-          userId: parsedTarget.id,
-          filePath: temp.filePath,
-          fileName,
-        });
-      }
-    } finally {
-      await cleanupTempDir(tempDir);
+    if (parsedTarget.chatType === "group") {
+      await uploadGroupFile({
+        endpoint,
+        accessToken: account.accessToken,
+        groupId: parsedTarget.id,
+        filePath: staged.containerPath,
+        fileName,
+      });
+    } else {
+      await uploadPrivateFile({
+        endpoint,
+        accessToken: account.accessToken,
+        userId: parsedTarget.id,
+        filePath: staged.containerPath,
+        fileName,
+      });
     }
 
     core.channel.activity.record({

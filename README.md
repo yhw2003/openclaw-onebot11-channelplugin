@@ -21,19 +21,21 @@ openclaw plugins install ./extensions/onebot11
 
 ```json5
 {
-  "channels": {
-    "onebot11": {
-      "enabled": true,
-      "endpoint": "http://127.0.0.1:3000",
-      "accessTokenFile": "/path/to/onebot11.token",
+  channels: {
+    onebot11: {
+      enabled: true,
+      endpoint: "http://127.0.0.1:3000",
+      accessTokenFile: "/path/to/onebot11.token",
+      sharedMediaHostDir: "/path/to/openclaw_onebot11/shared_media",
+      sharedMediaContainerDir: "/openclaw_media",
 
       // 安全策略
-      "dmPolicy": "pairing",
-      "groupPolicy": "allowlist",
-      "groupAllowFrom": ["123456789"],
+      dmPolicy: "pairing",
+      groupPolicy: "allowlist",
+      groupAllowFrom: ["123456789"],
 
       // 群聊默认要求 @ 机器人
-      "requireMention": true,
+      requireMention: true,
     },
   },
 }
@@ -148,20 +150,37 @@ SSE 入站连接地址。若不填则回退 `endpoint`。
 
 给该账号回复内容添加前缀（例如标注环境/身份）。
 
+### 20) `sharedMediaHostDir?: string`
+
+本地共享文件目录（OpenClaw 进程可写），用于发送文件前先把媒体落盘到这个目录。
+
+- 发送文件时必填
+- 建议配置为与你的 OneBot11 服务（例如容器）做了目录映射的宿主机目录
+
+### 21) `sharedMediaContainerDir?: string`
+
+OneBot11 服务端可见的远程目录（通常是容器内挂载点）。
+
+- 发送文件时必填
+- 插件会把本地文件同步到 `sharedMediaHostDir`，然后调用 OneBot11 时传这个远程目录下的路径，而不是本机路径
+
 ## 鉴权来源优先级
 
 > 默认账号还支持环境变量：`ONEBOT11_ACCESS_TOKEN`。
 
 **默认账号（default）**：
+
 1. `accessToken`
 2. `accessTokenFile`
 3. `ONEBOT11_ACCESS_TOKEN`
 
 **非默认账号（accounts.<id>）**：
+
 1. `accounts.<id>.accessToken`
 2. `accounts.<id>.accessTokenFile`
 
 非默认账号不会回退到环境变量。
+
 ## 多账号配置示例
 
 ```json5
@@ -176,6 +195,8 @@ SSE 入站连接地址。若不填则回退 `endpoint`。
           endpoint: "http://127.0.0.1:3000",
           sseUrl: "http://127.0.0.1:3000/events",
           accessTokenFile: "/secrets/onebot11-prod.token",
+          sharedMediaHostDir: "/srv/openclaw_onebot11/shared_media",
+          sharedMediaContainerDir: "/openclaw_media",
           dmPolicy: "pairing",
           groupPolicy: "allowlist",
           groupAllowFrom: ["123456789"],

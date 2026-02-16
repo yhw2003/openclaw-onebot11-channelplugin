@@ -1,6 +1,6 @@
 import type { ReplyPayload, ChannelOutboundAdapter } from "openclaw/plugin-sdk";
 import { normalizeOneBot11MessagingTarget } from "../normalize.js";
-import { sendFileOneBot11 } from "./file.js";
+import { OneBot11FileSyncConfigError, sendFileOneBot11 } from "./file.js";
 import {
   logOutboundDebug,
   logOutboundError,
@@ -73,6 +73,14 @@ async function sendMediaWithFallback(params: {
       chatId: params.target,
     };
   } catch (error) {
+    if (error instanceof OneBot11FileSyncConfigError) {
+      logOutboundError("adapter.sendMediaWithFallback.sync_config_missing", error, {
+        target: summarizeTarget(params.target),
+        media: summarizeMediaSource(params.mediaUrl),
+        elapsedMs: Date.now() - startedAt,
+      });
+      throw error;
+    }
     logOutboundError("adapter.sendMediaWithFallback.upload_failed", error, {
       target: summarizeTarget(params.target),
       media: summarizeMediaSource(params.mediaUrl),

@@ -6,15 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { onebot11Outbound } from "./outbound/adapter.js";
 import { setOneBotRuntime } from "./runtime.js";
 
-const cfg = {
-  channels: {
-    onebot11: {
-      endpoint: "http://localhost:3000",
-      accessToken: "test-token",
-      enabled: true,
-    },
-  },
-} as unknown as OpenClawConfig;
+let cfg: OpenClawConfig;
 
 type MockLogger = {
   debug: ReturnType<typeof vi.fn>;
@@ -49,6 +41,7 @@ describe("onebot11 outbound adapter", () => {
   const originalFetch = globalThis.fetch;
   const cleanupDirs: string[] = [];
   let fileUrl = "";
+  let hostSharedDir = "";
   let logger: MockLogger;
 
   beforeEach(async () => {
@@ -59,12 +52,24 @@ describe("onebot11 outbound adapter", () => {
       warn: vi.fn(),
       error: vi.fn(),
     };
-    setOneBotRuntime(createMockRuntime(logger));
 
     // Ensure loadWebMedia() local-root guard passes for our temp file fixture.
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-onebot11-outbound-test-"));
     const fixturePath = path.join(tempDir, "hello.txt");
     await fs.writeFile(fixturePath, "hello", "utf8");
+    hostSharedDir = path.join(tempDir, "shared-media");
+    cfg = {
+      channels: {
+        onebot11: {
+          endpoint: "http://localhost:3000",
+          accessToken: "test-token",
+          enabled: true,
+          sharedMediaHostDir: hostSharedDir,
+          sharedMediaContainerDir: "/openclaw_media",
+        },
+      },
+    } as unknown as OpenClawConfig;
+    setOneBotRuntime(createMockRuntime(logger));
     fileUrl = fixturePath;
 
     // ensure any previous temp dir from a prior test is cleaned
@@ -79,9 +84,15 @@ describe("onebot11 outbound adapter", () => {
   });
 
   it("uploads group file then sends caption as message", async () => {
+    let uploadedRemotePath = "";
     const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
       const u = String(url);
       if (u.includes("/upload_group_file")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { file?: string; name?: string };
+        uploadedRemotePath = String(body.file ?? "");
+        expect(uploadedRemotePath).toMatch(/^\/openclaw_media\/.+/);
+        expect(uploadedRemotePath).not.toContain(hostSharedDir);
+        expect(body.name).toBe("hello.txt");
         return {
           ok: true,
           json: async () => ({ status: "ok", data: {} }),
@@ -119,6 +130,9 @@ describe("onebot11 outbound adapter", () => {
         expect.stringContaining("/send_group_msg"),
       ]),
     );
+    expect(uploadedRemotePath).toMatch(/^\/openclaw_media\/.+/);
+    const stagedHostPath = path.join(hostSharedDir, path.posix.basename(uploadedRemotePath));
+    await expect(fs.stat(stagedHostPath)).resolves.toBeDefined();
     const debugLog = logger.debug.mock.calls.map((call) => String(call[0])).join("\n");
     expect(debugLog).toContain("event=adapter.sendMedia.start");
     expect(debugLog).toContain("event=actions.request.start");
@@ -164,6 +178,38 @@ describe("onebot11 outbound adapter", () => {
     expect(debugLog).toContain("event=adapter.sendMediaWithFallback.fallback_sent");
     expect(errorLog).toContain("event=adapter.sendMediaWithFallback.upload_failed");
     expect(errorLog).not.toContain("test-token");
+  });
+
+  it("fails when shared media directories are missing", async () => {
+    cfg = {
+      channels: {
+        onebot11: {
+          endpoint: "http://localhost:3000",
+          accessToken: "test-token",
+          enabled: true,
+        },
+      },
+    } as unknown as OpenClawConfig;
+
+    const fetchMock = vi.fn(async () => {
+      throw new Error("fetch should not be called when media sync is misconfigured");
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(
+      onebot11Outbound.sendMedia!({
+        cfg,
+        to: "group:42",
+        text: "caption",
+        mediaUrl: fileUrl,
+        accountId: "default",
+        replyToId: null,
+      }),
+    ).rejects.toThrow("sharedMediaHostDir");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    const errorLog = logger.error.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(errorLog).toContain("event=adapter.sendMediaWithFallback.sync_config_missing");
   });
 
   it("uses --target wording for invalid target errors", () => {

@@ -17,6 +17,8 @@ const OneBot11AccountSchemaBase = z
     endpoint: z.string().optional(),
     accessToken: z.string().optional(),
     accessTokenFile: z.string().optional(),
+    sharedMediaHostDir: z.string().optional(),
+    sharedMediaContainerDir: z.string().optional(),
     sendMode: z.enum(["http", "sse-http"]).optional(),
     sseUrl: z.string().optional(),
     dmPolicy: DmPolicySchema.optional().default("pairing"),
